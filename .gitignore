@@ -2,5 +2,4 @@
 /.vscode-test/
 /node_modules/
 /out/
-/.vscode/
 .DS_Store

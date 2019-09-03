@@ -1,10 +1,10 @@
-import * as child from "child_process";
 import * as path from "path";
 import * as vscode from "vscode";
 import * as engines from "./engines";
 import { ExtensionRequest, ExtensionResponse, PreviewRequest, PreviewResponse } from "./messages";
 import { createMessenger, IMessagePort, IReceiveMessage, ISendMessage } from "./messenger";
 import { createScheduler } from "./scheduler";
+import * as utilities from "./utilities";
 
 const previewType = "graphviz.preview";
 const ALL_MODS = "all_mods";
@@ -32,20 +32,14 @@ interface IPreviewContext {
     readonly updatePreview: () => void;
 }
 
-interface IGraphData {
-    readonly graphText: string;
-    readonly toSet: Map<string, Set<string>>;
-    readonly mapSet: Map<string, string>;
-}
-
 export class PreviewManager {
     private readonly previewDirUri: vscode.Uri;
     private readonly previewContent: string;
     private readonly previewContexts = new WeakMap<vscode.TextDocument, IPreviewContext>();
-    private toSet = new Map();
-    private mapSet = new Map();
-    private graphText = "";
     private mod = ALL_MODS;
+    private graphText = "";
+    private Graph = require("@dagrejs/graphlib").Graph;
+    private g = new this.Graph({ multigraph: true });
 
     public constructor(context: vscode.ExtensionContext, template: string) {
         this.previewDirUri = vscode.Uri.file(context.asAbsolutePath("out/preview"));
@@ -73,49 +67,8 @@ export class PreviewManager {
 
     private async updateModPreview(document: vscode.TextDocument, mod: string): Promise<void> {
         const context = this.previewContexts.get(document);
-
-        let graphText = "digraph G{\n";
-        let gSet = new Set();
-        if (mod === ALL_MODS) {
-            this.mapSet.forEach((value) => {
-                let tmpA = new Set();
-                tmpA = value;
-                if (tmpA) {
-                    tmpA.forEach(el => {
-                        gSet.add(el);
-                    });
-                }
-            });
-        } else {
-            let froms = [];
-            froms.push(mod);
-            while (froms.length > 0) {
-                const to = froms.pop();
-                let tmp1 = new Set();
-                tmp1 = this.toSet.get(to);
-                if (tmp1) {
-                    tmp1.forEach(el => {
-                        froms.push(el);
-                    });
-                }
-                let tmp2 = new Set();
-                tmp2 = this.mapSet.get(to);
-                if (tmp2) {
-                    tmp2.forEach(ele => {
-                        gSet.add(ele);
-                    });
-                }
-            }
-        }
-        if (gSet.size > 0) {
-            gSet.forEach(el => {
-                graphText +=  el;
-            });
-        }
-        graphText += "}";
-        this.graphText = graphText;
-
         this.mod = mod;
+        await this.updateGraphText();
         if (context !== undefined) {
             context.updatePreview();
         }
@@ -135,67 +88,85 @@ export class PreviewManager {
         }
     }
 
-    private async goModGraph(dir: string):  Promise<IGraphData> {
-        return new Promise((resolve, reject) => {
-            child.exec("go mod graph", {cwd: dir}, (error, stdout, stderr) => {
-              if (error) {
-                vscode.window.showErrorMessage("Need run 'go mod graph' first.");
-                return reject(error);
-              }
-              if (stderr) {
-                vscode.window.showErrorMessage("Need run 'go mod graph' first.");
-                return reject(stderr);
-              }
+    private async updateGraphText(): Promise<void> {
+        let graphText = "digraph G{\n";
+        if (this.mod === ALL_MODS) {
+            const mods = this.g.nodes();
+            if (mods.length > 200) {
+                vscode.window.showInformationMessage("The size of dependency mods is more than 200, so please check ONE of them.");
+            } else {
+                const edges = this.g.edges();
+                for (const edge of edges) {
+                    graphText += `"${edge.v}" -> "${edge.w}" ${edge.name}\n`;
+                }
+            }
+        } else {;
+            let froms = [];
+            let used = new Set();
+            froms.push(this.mod);
+            used.add(this.mod);
+            while (froms.length > 0) {
+                const to: string = froms.pop()
+                // const edgeS = this.g.outEdges(to);
+                const ine = this.g.inEdges(to);
+                // const all = this.g.nodeEdges(to);
+                for (const edge of ine) {
+                    graphText += `"${edge.v}" -> "${edge.w}" ${edge.name}\n`;
+                    if (!used.has(edge.v)) {
+                        froms.push(edge.v);
+                        used.add(edge.v);
+                    }
+                }
+            }
+            used = new Set([]);
+        }
+        graphText += "}";
+        this.graphText = graphText;
+    }
 
-              // console.log('stdout: ' + stdout);
-              // console.log('stderr: ' + stderr);
+    private async goModGraph(dir: string):  Promise<void> {
+        try {
+            const [exitCode, stdout, stderr] = await utilities.runChildProcess(
+                "go",
+                ["mod", "graph"],
+                dir,
+                "",
+                undefined
+            );
+            if (exitCode !== 0) {
+                throw new Error(stderr.trim());
+            }
 
-              let graphText = "digraph G{\n";
-              let splitted = stdout.split("\n");
-              let toSet = new Map();
-              let mapSet = new Map();
-              splitted.forEach(li => {
-                  if (li && li.includes(" ") && li.includes("@") && !li.includes(":")) {
-                    //console.log("for loop mod graph: " + li)
-                    let mods = li.split(" ");
+            // console.log('stdout: ' + stdout);
+            // console.log('stderr: ' + stderr);
+
+            const splitted = stdout.split("\n");
+            splitted.forEach(li => {
+                if (li && li.includes(" ") && li.includes("@") && !li.includes(":")) {
+                    // console.log("for loop mod graph: " + li)
+                    const mods = li.split(" ");
                     let from = mods[0];
                     let fromV = "Current";
                     if (from.indexOf("@") >= 0) {
-                        let froms = mods[0].split("@");
+                        const froms = mods[0].split("@");
                         from = froms[0];
                         fromV = froms[1];
                     }
-                    let tos = mods[1].split("@");
-                    let to = tos[0];
-                    let toV = tos[1];
+                    const tos = mods[1].split("@");
+                    const to = tos[0];
+                    const toV = tos[1];
 
-                    const newGraph = "\"" + from + "\"" + " -> " + "\"" + to + "\" [label" +
-                                    "=\"" + fromV + " -> " + toV + "\"]\n";
-                    graphText += newGraph;
-                    if (!mapSet.has(to)) {
-                        let texts = new Set();
-                        texts.add(newGraph);
-                        mapSet.set(to, texts);
-                    } else {
-                        let texts = mapSet.get(to);
-                        texts.add(newGraph);
-                        mapSet.set(to, texts);
-                    }
-                    if (toSet.has(to)) {
-                        let pres = toSet.get(to);
-                        pres.add(from);
-                        toSet.set(to, pres);
-                    } else {
-                        let pres = new Set();
-                        pres.add(from);
-                        toSet.set(to, pres);
-                    }
+                    const edge = `[label="${fromV} -> ${toV}"]`;
+                    this.g.setEdge(from, to, edge, edge); // from, to, label, name
                 }
-              });
-              graphText += "}";
-              resolve({graphText, toSet, mapSet});
             });
-          });
+        } catch (error) {
+            if (error.code === "ENOENT") {
+                vscode.window.showErrorMessage("Need run 'go mod graph' first.");
+            } else {
+                throw error;
+            }
+        }
     }
 
     private async createPreview(document: vscode.TextDocument, column: vscode.ViewColumn): Promise<IPreviewContext> {
@@ -208,12 +179,10 @@ export class PreviewManager {
         }
 
         // TODO need proper progress message
-        vscode.window.setStatusBarMessage("> Running 'go mod graph'...", 1000 * 10)
-        const {graphText, toSet, mapSet} = await this.goModGraph(documentDir);
-        this.graphText = graphText;
-        this.toSet = toSet;
-        this.mapSet = mapSet;
-        let mods = [...this.toSet.keys()];
+        vscode.window.setStatusBarMessage("> Running 'go mod graph'...", 1000 * 10);
+        await this.goModGraph(documentDir);
+        await this.updateGraphText();
+        let mods = this.g.nodes();
         mods.push(this.mod);
         mods.sort();
 
@@ -253,7 +222,7 @@ export class PreviewManager {
                         break;
                     case "mod":
                         try {
-                            // console.log("------update mod-----");
+                            // console.log("------update mod--:", message.mod);
                             await this.updateModPreview(document, message.mod);
                         } catch (error) {
                             await vscode.window.showErrorMessage(error.message);
@@ -280,7 +249,7 @@ export class PreviewManager {
         // Add event handlers.
 
         // TODO need proper progress message
-        vscode.window.setStatusBarMessage(">> Rendering all mods graph...", 1000 * 10)
+        vscode.window.setStatusBarMessage(">> Rendering all mods graph...", 1000 * 10);
         const updatePreview = () => scheduler(this.graphText);
 
         webviewPanel.onDidDispose(() => this.previewContexts.delete(document));
