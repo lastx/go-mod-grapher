@@ -1,5 +1,8 @@
 # Change Log
 
+## 1.1.1 - Sep 04, 2019
+- Change README.md
+
 ## 1.1.0 - Sep 04, 2019
 - Performance optimization: support BIG project !!!
 - Fixes the big mod list problem !!!

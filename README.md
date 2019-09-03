@@ -6,10 +6,8 @@ An extension for Visual Studio Code to preview of go command: `go mod graph`.
 ![screenshot2](resources/go-mod-grapher-screenshot2.png)
 
 ## HELP
-The author is not a front-end engineer. This extension should be considered as a prototype, so there will be many errors. Here is a known problem:
-
-1. [NEED FIX] If the number of mods list on `go mod graph` is too much, (say, more than 30?) there will be suspended animation and do not work!
-2. [TODO] Need proper progress message
+The author is not a front-end engineer. This extension should be considered as a prototype, so experience may not be good. Hope some engineers can provide some optimizations.
+- [TODO] Need proper progress message.
 
 ## Pre install
 1. Be sure that `go` command is in `$PATH`
@@ -67,13 +65,8 @@ executable, or make sure the directory containing the dot program is in your `PA
 
 To set the `graphvizPreview.dotPath` option, go to File → Preference → Settings.
 
-## Known issues
-
-- After saving an untitled file, the preview becomes invalid.
-- When the zoom ratio is too large, the graph may be at a wrong position.
-- Do not work if number of mods is too much.
-
 ## Acknowledgement
 1. The base code is forked from [Graphviz-Preview](https://github.com/EFanZh/Graphviz-Preview), which is a extension to preview Graphviz (DOT) files
 2. The code in screenshot is Golong web framework [gin-gonic/gin](https://github.com/gin-gonic/gin/)
 3. The icon of this extension is download from [flaticon](https://www.flaticon.com/)
+4. Add new lib to save graph data structure: [graphlib](https://github.com/dagrejs/graphlib)
